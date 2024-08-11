@@ -1,9 +1,17 @@
 import streamlit as st
 import logging
 import chardet  # 新增这个库来检测文件编码
+from dotenv import load_dotenv
+import os
 from file_reader import read_pdf, tokenize_text
 from question_generator import generate_multiple_choice_questions, generate_fill_in_the_blank_questions, generate_essay_questions
-from config import OPENAI_API_KEY, BASE_URL
+
+# 加载环境变量
+load_dotenv()
+
+# 从环境变量中获取 API 密钥和 BASE_URL
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BASE_URL = os.getenv("BASE_URL", "https://api.openai.com/v1")
 
 # 配置日志记录
 logging.basicConfig(level=logging.INFO)
@@ -111,4 +119,28 @@ if uploaded_file is not None:
 
 # 添加一个按钮来测试 API 连接
 if st.button("测试 API 连接"):
-    test_openai_api()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Say this is a test"}
+        ],
+        "max_tokens": 50
+    }
+
+    try:
+        response = httpx.post(f"{BASE_URL}/chat/completions", headers=headers, json=data)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        result = response.json()
+        st.success("API 连接测试成功!")
+        st.write(json.dumps(result, indent=2))
+    except httpx.HTTPStatusError as exc:
+        st.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
+        logger.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
+    except Exception as e:
+        st.error(f"其他错误: {e}")
+        logger.error(f"其他错误: {e}")
