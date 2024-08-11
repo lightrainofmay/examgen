@@ -1,6 +1,7 @@
 import streamlit as st
 import logging
-import chardet  # 新增这个库来检测文件编码
+import chardet
+import httpx
 from dotenv import load_dotenv
 import os
 from file_reader import read_pdf, tokenize_text
@@ -17,7 +18,37 @@ BASE_URL = os.getenv("BASE_URL", "https://api.openai.com/v1")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-st.title("自动出题机器人")
+# 定义一个用于与 OpenAI API 交互的函数
+def call_openai_api(messages, model="gpt-3.5-turbo", max_tokens=1000):
+    try:
+        logger.info(f"Sending request to OpenAI API with messages: {messages} and model: {model}")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+        data = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens
+        }
+        # 设置超时时间为60秒，连接超时时间为30秒
+        timeout = httpx.Timeout(60.0, connect=30.0)
+        response = httpx.post(f"{BASE_URL}/chat/completions", headers=headers, json=data, timeout=timeout)
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"Received response from OpenAI API: {result}")
+        return result
+    except httpx.HTTPStatusError as exc:
+        logger.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
+        return None
+    except httpx.RequestError as exc:
+        logger.error(f"Request error occurred: {exc.request.url} - {exc}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error occurred: {e}")
+        return None
+
+st.title("自动出题和作文生成机器人")
 
 # 文件上传组件
 uploaded_file = st.file_uploader("上传PDF或TXT文件", type=["pdf", "txt"])
@@ -117,30 +148,41 @@ if uploaded_file is not None:
                 logger.error(f"Error generating questions: {e}")
                 st.error(f"生成试题时出错: {e}")
 
+# 新增：生成作文范文的功能
+st.subheader("生成作文范文")
+essay_topic = st.text_input("请输入作文题目或提示：")
+
+if st.button("生成作文范文"):
+    if essay_topic:
+        try:
+            response = call_openai_api(
+                messages=[
+                    {"role": "system", "content": "你是一位出色的作文写作助手，擅长用中文撰写范文。"},
+                    {"role": "user", "content": f"请写一篇关于‘{essay_topic}’的作文，字数在300到500字之间。"}
+                ],
+                model="gpt-3.5-turbo",
+                max_tokens=500
+            )
+            if response:
+                st.write("作文范文：")
+                st.write(response['choices'][0]['message']['content'])
+            else:
+                st.error("生成作文范文时出错")
+        except Exception as e:
+            logger.error(f"Error generating essay example: {e}")
+            st.error(f"生成作文范文时出错: {e}")
+    else:
+        st.error("请输入作文题目或提示")
+
 # 添加一个按钮来测试 API 连接
 if st.button("测试 API 连接"):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    data = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Say this is a test"}
-        ],
-        "max_tokens": 50
-    }
-
-    try:
-        response = httpx.post(f"{BASE_URL}/chat/completions", headers=headers, json=data)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        result = response.json()
+    test_messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Say this is a test"}
+    ]
+    response = call_openai_api(test_messages, model="gpt-3.5-turbo", max_tokens=50)
+    if response:
         st.success("API 连接测试成功!")
-        st.write(json.dumps(result, indent=2))
-    except httpx.HTTPStatusError as exc:
-        st.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
-        logger.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
-    except Exception as e:
-        st.error(f"其他错误: {e}")
-        logger.error(f"其他错误: {e}")
+        st.write(response['choices'][0]['message']['content'])
+    else:
+        st.error("API 连接测试失败")
