@@ -1,17 +1,14 @@
 import time
 import streamlit as st
 import logging
-import chardet
 import httpx
 from dotenv import load_dotenv
 import os
-from file_reader import read_pdf, tokenize_text
-from question_generator import generate_multiple_choice_questions, generate_fill_in_the_blank_questions, generate_essay_questions
 
 # 加载环境变量
 load_dotenv()
 
-# 从环境变量中获取 API 密钥和 BASE_URL
+# 获取API密钥和基本URL
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 BASE_URL = os.getenv("BASE_URL", "https://api.openai.com/v1")
 
@@ -19,7 +16,7 @@ BASE_URL = os.getenv("BASE_URL", "https://api.openai.com/v1")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 定义一个用于与 OpenAI API 交互的函数
+# 定义与OpenAI API交互的类
 class RateLimitedOpenAIClient:
     def __init__(self, api_key, base_url):
         self.api_key = api_key
@@ -29,13 +26,13 @@ class RateLimitedOpenAIClient:
     def call_openai_api(self, messages, model="gpt-3.5-turbo", max_tokens=1000):
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
-        if time_since_last_request < 0.2:  # 1秒内最多5次请求
+        if time_since_last_request < 0.2:  # 1秒最多5次请求
             time.sleep(0.2 - time_since_last_request)
 
         self.last_request_time = time.time()
 
         try:
-            logger.info(f"Sending request to OpenAI API with messages: {messages} and model: {model}")
+            logger.info(f"发送请求到OpenAI API，消息: {messages}，模型: {model}")
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}"
@@ -49,156 +46,54 @@ class RateLimitedOpenAIClient:
             response = httpx.post(f"{self.base_url}/chat/completions", headers=headers, json=data, timeout=timeout)
             response.raise_for_status()
             result = response.json()
-            logger.info(f"Received response from OpenAI API: {result}")
+            logger.info(f"从OpenAI API接收到的响应: {result}")
             return result
         except httpx.HTTPStatusError as exc:
-            logger.error(f"HTTP error occurred: {exc.response.status_code} - {exc.response.text}")
+            logger.error(f"HTTP错误: {exc.response.status_code} - {exc.response.text}")
             return None
         except httpx.RequestError as exc:
-            logger.error(f"Request error occurred: {exc.request.url} - {exc}")
+            logger.error(f"请求错误: {exc.request.url} - {exc}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error occurred: {e}")
+            logger.error(f"意外错误: {e}")
             return None
 
 # 初始化API客户端
 client = RateLimitedOpenAIClient(api_key=OPENAI_API_KEY, base_url=BASE_URL)
 
-st.title("自动出题和作文生成机器人")
+# Streamlit应用标题
+st.title("智能教学互动问答助手")
 
-# 文件上传组件
-uploaded_file = st.file_uploader("上传PDF或TXT文件", type=["pdf", "txt"])
+# 初始化会话状态中的聊天记录
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-def read_txt(file):
-    rawdata = file.read()
-    result = chardet.detect(rawdata)
-    charenc = result['encoding']
-    text = rawdata.decode(charenc)
-    return text
-
-if uploaded_file is not None:
-    st.write("文件已上传")
-    file_type = uploaded_file.name.split('.')[-1]
-
-    if file_type == 'pdf':
-        text = read_pdf(uploaded_file)
-    elif file_type == 'txt':
-        text = read_txt(uploaded_file)
+# 显示聊天记录
+for chat in st.session_state.chat_history:
+    if chat['role'] == 'user':
+        st.markdown(f"**你**: {chat['content']}")
     else:
-        st.error("不支持的文件类型。请上传PDF或TXT文件。")
-        text = ""
+        st.markdown(f"**AI**: {chat['content']}")
 
-    if text:
-        st.subheader("文件内容")
-        st.write(text[:500])  # 显示文件的前500个字符
-        sentences = tokenize_text(text)
-    else:
-        st.write("未能读取文件内容。")
-        sentences = []
+# 用户输入
+user_input = st.text_input("输入你的问题：")
 
-    if sentences:
-        st.subheader("生成的试题")
+if st.button("发送"):
+    if user_input:
+        # 保存用户的问题到聊天记录
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        
+        # 调用OpenAI API生成回复
+        messages = st.session_state.chat_history
+        response = client.call_openai_api(messages)
+        
+        if response:
+            ai_reply = response['choices'][0]['message']['content']
+            # 保存AI的回复到聊天记录
+            st.session_state.chat_history.append({"role": "assistant", "content": ai_reply})
+        else:
+            st.error("生成回复时出错")
 
-        if st.button("生成选择题"):
-            try:
-                response = generate_multiple_choice_questions(" ".join(sentences))
-                if response:
-                    st.write(response)
-                else:
-                    st.error("生成选择题时出错")
-            except Exception as e:
-                logger.error(f"Error generating multiple choice questions: {e}")
-                st.error(f"生成选择题时出错: {e}")
-
-        if st.button("生成填空题"):
-            try:
-                response = generate_fill_in_the_blank_questions(" ".join(sentences))
-                if response:
-                    st.write(response)
-                else:
-                    st.error("生成填空题时出错")
-            except Exception as e:
-                logger.error(f"Error generating fill in the blank questions: {e}")
-                st.error(f"生成填空题时出错: {e}")
-
-        if st.button("生成问答题"):
-            try:
-                response = generate_essay_questions(" ".join(sentences))
-                if response:
-                    st.write(response)
-                else:
-                    st.error("生成问答题时出错")
-            except Exception as e:
-                logger.error(f"Error generating essay questions: {e}")
-                st.error(f"生成问答题时出错: {e}")
-
-        if st.button("一键生成所有试题"):
-            try:
-                # 生成填空题
-                st.write("生成填空题中...")
-                fill_in_the_blank_response = generate_fill_in_the_blank_questions(" ".join(sentences))
-                if fill_in_the_blank_response:
-                    st.write("填空题:")
-                    st.write(fill_in_the_blank_response)
-                else:
-                    st.error("生成填空题时出错")
-
-                # 生成选择题
-                st.write("生成选择题中...")
-                multiple_choice_response = generate_multiple_choice_questions(" ".join(sentences))
-                if multiple_choice_response:
-                    st.write("选择题:")
-                    st.write(multiple_choice_response)
-                else:
-                    st.error("生成选择题时出错")
-
-                # 生成问答题
-                st.write("生成问答题中...")
-                essay_response = generate_essay_questions(" ".join(sentences))
-                if essay_response:
-                    st.write("问答题:")
-                    st.write(essay_response)
-                else:
-                    st.error("生成问答题时出错")
-            except Exception as e:
-                logger.error(f"Error generating questions: {e}")
-                st.error(f"生成试题时出错: {e}")
-
-# 新增：生成作文范文的功能
-st.subheader("生成作文范文")
-essay_topic = st.text_input("请输入作文题目或提示：")
-
-if st.button("生成作文范文"):
-    if essay_topic:
-        try:
-            response = client.call_openai_api(
-                messages=[
-                    {"role": "system", "content": "你是一位出色的作文写作助手，擅长用中文撰写范文。"},
-                    {"role": "user", "content": f"请写一篇关于‘{essay_topic}’的作文，字数在300到500字之间。"}
-                ],
-                model="gpt-3.5-turbo",
-                max_tokens=500
-            )
-            if response:
-                st.write("作文范文：")
-                st.write(response['choices'][0]['message']['content'])
-            else:
-                st.error("生成作文范文时出错")
-        except Exception as e:
-            logger.error(f"Error generating essay example: {e}")
-            st.error(f"生成作文范文时出错: {e}")
-    else:
-        st.error("请输入作文题目或提示")
-
-# 添加一个按钮来测试 API 连接
-if st.button("测试 API 连接"):
-    test_messages = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Say this is a test"}
-    ]
-    response = client.call_openai_api(test_messages, model="gpt-3.5-turbo", max_tokens=50)
-    if response:
-        st.success("API 连接测试成功!")
-        st.write(response['choices'][0]['message']['content'])
-    else:
-        st.error("API 连接测试失败")
+# 按钮清除聊天记录
+if st.button("清除聊天记录"):
+    st.session_state.chat_history = []
