@@ -4,6 +4,8 @@ import logging
 import httpx
 from dotenv import load_dotenv
 import os
+from PIL import Image
+import io
 
 # 加载环境变量
 load_dotenv()
@@ -23,7 +25,7 @@ class RateLimitedOpenAIClient:
         self.base_url = base_url
         self.last_request_time = 0
 
-    def call_openai_api(self, messages, model="gpt-3.5-turbo", max_tokens=1000):
+    def call_openai_api(self, messages, model="gpt-4o-mini", max_tokens=1000):
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < 0.2:  # 1秒内最多5次请求
@@ -62,7 +64,7 @@ class RateLimitedOpenAIClient:
 client = RateLimitedOpenAIClient(api_key=OPENAI_API_KEY, base_url=BASE_URL)
 
 # Streamlit应用程序标题
-st.title("ChatGPT 风格的互动问答")
+st.title("智能互动教学系统")
 
 # 自定义CSS用于美化界面
 st.markdown("""
@@ -101,6 +103,11 @@ st.markdown("""
         border-radius: 5px;
         cursor: pointer;
     }
+    .upload-button {
+        width: 150px;
+        margin-top: 10px;
+        margin-right: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -120,6 +127,8 @@ st.markdown('</div>', unsafe_allow_html=True)
 # 用户输入问题
 user_input = st.text_input("输入你的问题：", "", key="chat_input")
 
+
+# 发送按钮
 if st.button("发送", key="send_button"):
     if user_input:
         # 保存用户的问题到聊天记录
@@ -133,11 +142,11 @@ if st.button("发送", key="send_button"):
             ai_reply = response['choices'][0]['message']['content']
             # 保存AI的回复到聊天记录
             st.session_state.chat_history.append({"role": "assistant", "content": ai_reply})
-            st.experimental_set_query_params(chat_history=st.session_state.chat_history)
+            st.rerun()  # 重新渲染页面以更新聊天记录
         else:
             st.error("生成回复时出错")
 
 # 按钮清除聊天记录
 if st.button("清除聊天记录"):
     st.session_state.chat_history = []
-    st.experimental_set_query_params(chat_history=[])
+    st.rerun()
